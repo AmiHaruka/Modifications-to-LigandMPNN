@@ -197,13 +197,18 @@ def main(args) -> None:
         parse_all_atoms_flag = args.ligand_mpnn_use_side_chain_context or (
             args.pack_side_chains and not args.repack_everything
         )
+
+        ligand_residues_list = [item for item in args.ligand_residues.split()]
+
         protein_dict, backbone, other_atoms, icodes, _ = parse_PDB(
             pdb,
             device=device,
             chains=parse_these_chains_only_list,
             parse_all_atoms=parse_all_atoms_flag,
             parse_atoms_with_zero_occupancy=args.parse_atoms_with_zero_occupancy,
+            ligand_residue_codes=ligand_residues_list
         )
+
         # make chain_letter + residue_idx + insertion_code mapping to integers
         R_idx_list = list(protein_dict["R_idx"].cpu().numpy())  # residue indices
         chain_letters_list = list(protein_dict["chain_letters"])  # chain letters
@@ -372,7 +377,7 @@ def main(args) -> None:
         with torch.no_grad():
             # run featurize to remap R_idx and add batch dimension
             if args.verbose:
-                if "Y" in list(protein_dict):
+                if "Y" in list(protein_dict):  
                     atom_coords = protein_dict["Y"].cpu().numpy()
                     atom_types = list(protein_dict["Y_t"].cpu().numpy())
                     atom_mask = list(protein_dict["Y_m"].cpu().numpy())
@@ -470,7 +475,7 @@ def main(args) -> None:
                 seq_out_str += [args.fasta_seq_separation]
             seq_out_str = "".join(seq_out_str)[:-1]
 
-            output_fasta = base_folder + "/seqs/" + name + args.file_ending + ".fa"
+            output_fasta = base_folder + "/seqs/" + name + args.file_ending + ".fasta"
             output_backbones = base_folder + "/backbones/"
             output_packed = base_folder + "/packed/"
             output_stats_path = base_folder + "stats/" + name + args.file_ending + ".pt"
@@ -985,6 +990,14 @@ if __name__ == "__main__":
         default=1,
         help="1-pack side chains using ligand context, 0 - do not use it.",
     )
+ # ------------------- START -------------------
+    argparser.add_argument(
+        "--ligand_residues",
+        type=str,
+        default="",
+        help="Specify which residues should be treated as a ligand, e.g., 'B194 B195 B196'. These will be excluded from the protein and treated as context atoms."
+    )
+ # ------------------- END -------------------
 
     args = argparser.parse_args()
     main(args)

@@ -516,7 +516,10 @@ def parse_PDB(
     device: str = "cpu",
     chains: list = [],
     parse_all_atoms: bool = False,
-    parse_atoms_with_zero_occupancy: bool = False
+    parse_atoms_with_zero_occupancy: bool = False,
+ # ------------------- START -------------------
+    ligand_residue_codes: list = []
+ # ------------------- END -------------------
 ):
     """
     input_path : path for the input PDB
@@ -784,9 +787,74 @@ def parse_PDB(
             str_out += " chain " + item + " or"
         atoms = atoms.select(str_out[1:-3])
 
-    protein_atoms = atoms.select("protein")
+    # protein_atoms = atoms.select("protein")
+    # other_atoms = atoms.select("not protein and not water")
+
+
+    # ligand_like_residues = None
+    # ligand_selection_string = ""
+    # if ligand_residue_codes:
+    #     selection_parts = []
+    #     for code in ligand_residue_codes:
+    #         chain_id = code[0]
+    #         res_num = ''.join(filter(str.isdigit, code))
+    #         if res_num:
+    #             selection_parts.append(f"(chain {chain_id} and resnum {res_num})")
+    #     if selection_parts:
+    #         ligand_selection_string = " or ".join(selection_parts)
+    #         ligand_like_residues = atoms.select(ligand_selection_string)
+        
+    # if ligand_like_residues is not None:
+    #     print(f"Successfully selected {len(ligand_like_residues.getResnums())} atoms for specified ligand residues.")
+    #     protein_atoms = atoms.select(f"protein and not ({ligand_selection_string})")
+    # else:
+    #     protein_atoms = atoms.select("protein")
+
+    # original_other_atoms = atoms.select("not protein and not water")
+    # if original_other_atoms is not None and ligand_like_residues is not None:
+    #     other_atoms = original_other_atoms + ligand_like_residues
+    # elif ligand_like_residues is not None:
+    #     other_atoms = ligand_like_residues
+    # else:
+    #     other_atoms = original_other_atoms
+
+  # ------------------- START -------------------   
+    ligand_like_residues = None
+    ligand_selection_string = ""
+    protein_selection_suffix = ""
+
+    if ligand_residue_codes:
+        selection_parts = []
+        # 遍历指定的ligand_residues残基编号
+        for code in ligand_residue_codes:
+            chain_id = code[0]
+            res_num = ''.join(filter(str.isdigit, code))
+            if res_num:
+                selection_parts.append(f"(chain {chain_id} and resnum {res_num})")
+        
+        if selection_parts:
+            ligand_selection_string = " or ".join(selection_parts)
+            protein_selection_suffix = f" and not ({ligand_selection_string})"
+
+    protein_atoms = atoms.select(f"protein{protein_selection_suffix}")
+    original_other_atoms = atoms.select("not protein and not water")
+
+    if ligand_selection_string:
+        ligand_like_residues = atoms.select(ligand_selection_string)
+        if ligand_like_residues:
+             print(f"Successfully selected {len(ligand_like_residues.getResnums())} atoms from specified ligand residues: {ligand_residue_codes}")
+    else:
+        ligand_like_residues = None
+
+    if original_other_atoms is not None and ligand_like_residues is not None:
+        other_atoms = original_other_atoms + ligand_like_residues
+    elif ligand_like_residues is not None:
+        other_atoms = ligand_like_residues
+    else:
+        other_atoms = original_other_atoms
+ # ------------------- END -------------------
+
     backbone = protein_atoms.select("backbone")
-    other_atoms = atoms.select("not protein and not water")
     water_atoms = atoms.select("water")
 
     CA_atoms = protein_atoms.select("name CA")
@@ -830,13 +898,38 @@ def parse_PDB(
     S = np.array([restype_STRtoINT[AA] for AA in list(S)], np.int32)
     X = np.concatenate([N[:, None], CA[:, None], C[:, None], O[:, None]], 1)
 
+    # try:
+    #     Y = np.array(other_atoms.getCoords(), dtype=np.float32)
+    #     Y_t = list(other_atoms.getElements())
+    #     Y_t = np.array(
+    #         [
+    #             element_dict[y_t.upper()] if y_t.upper() in element_list else 0
+    #             for y_t in Y_t
+    #         ],
+    #         dtype=np.int32,
+    #     )
+    #     Y_m = (Y_t != 1) * (Y_t != 0)
+
+    #     Y = Y[Y_m, :]
+    #     Y_t = Y_t[Y_m]
+    #     Y_m = Y_m[Y_m]
+    # except:
+    #     Y = np.zeros([1, 3], np.float32)
+    #     Y_t = np.zeros([1], np.int32)
+    #     Y_m = np.zeros([1], np.int32)
+
+ # ------------------- START -------------------
     try:
         Y = np.array(other_atoms.getCoords(), dtype=np.float32)
-        Y_t = list(other_atoms.getElements())
+        elements_raw = list(other_atoms.getElements())
+        #由于pdb格式问题，如果元素信息为空，则从原子名猜测
+        if all(e == '' for e in elements_raw):
+            atom_names = list(other_atoms.getNames())
+            elements_raw = [name.lstrip('0123456789')[0] for name in atom_names]
         Y_t = np.array(
             [
                 element_dict[y_t.upper()] if y_t.upper() in element_list else 0
-                for y_t in Y_t
+                for y_t in elements_raw
             ],
             dtype=np.int32,
         )
@@ -844,11 +937,73 @@ def parse_PDB(
 
         Y = Y[Y_m, :]
         Y_t = Y_t[Y_m]
-        Y_m = Y_m[Y_m]
+        Y_m = Y_m[Y_m] # 一个全为True的、长度等于保留原子数的掩码
     except:
         Y = np.zeros([1, 3], np.float32)
         Y_t = np.zeros([1], np.int32)
         Y_m = np.zeros([1], np.int32)
+   
+    # print("\n--- Ligand (other_atoms) processing ---")
+    # if other_atoms is not None and len(other_atoms) > 0:
+    #     try:
+    #         print(f"Step 1: 'other_atoms' object is valid, contains {len(other_atoms)} atoms.")
+            
+    #         # 2:获取坐标
+    #         Y = np.array(other_atoms.getCoords(), dtype=np.float32)
+    #         print(f"Step 2: Successfully got coordinates. Shape: {Y.shape}")
+            
+    #         # 3:获取元素
+    #         elements_raw = list(other_atoms.getElements())
+    #         print(f"Step 3: Raw elements from getElements(): {elements_raw}")
+            
+    #         # 如果元素是空的，就从原子名猜测
+    #         if all(e == '' for e in elements_raw):
+    #             print("Step 3.1: Elements are empty. Guessing from atom names.")
+    #             atom_names = list(other_atoms.getNames())
+    #             elements_raw = [name.lstrip('0123456789')[0] for name in atom_names]
+    #             print(f"Step 3.2: Guessed elements: {elements_raw}")
+
+    #         # 4:将元素转换为整数索引
+    #         Y_t = np.array(
+    #             [
+    #                 element_dict[y_t.upper()] if y_t.upper() in element_list else 0
+    #                 for y_t in elements_raw
+    #             ],
+    #             dtype=np.int32,
+    #         )
+    #         print(f"Step 4: Converted elements to integer array: {Y_t}")
+            
+    #         # 5:创建掩码，过滤掉氢和未知原子
+    #         Y_m = (Y_t != 1) * (Y_t != 0)
+    #         print(f"Step 5: Created boolean mask for filtering: {Y_m}")
+    #         print(f"Step 5.1: Number of atoms to keep (True values in mask): {np.sum(Y_m)}")
+
+    #         # 6:应用掩码
+    #         Y = Y[Y_m, :]
+    #         Y_t = Y_t[Y_m]
+    #         Y_m = Y_m[Y_m] # 一个全为True的、长度等于保留原子数的掩码
+
+    #         print(f"Step 6: After filtering, Y shape: {Y.shape}, Y_t length: {len(Y_t)}, Y_m length: {len(Y_m)}")
+
+    #         if Y.shape[0] == 0:
+    #             print("!!! WARNING: All ligand atoms were filtered out. Creating empty tensors. !!!")
+    #             Y = np.zeros([1, 3], np.float32)
+    #             Y_t = np.zeros([1], np.int32)
+    #             Y_m = np.zeros([1], np.int32)
+
+    #     except Exception as e:
+    #         print(f"!!! AN ERROR OCCURRED inside the 'try' block: {e} !!!")
+    #         Y = np.zeros([1, 3], np.float32)
+    #         Y_t = np.zeros([1], np.int32)
+    #         Y_m = np.zeros([1], np.int32)
+    # else:
+    #     print("Step 1: 'other_atoms' object is None or empty. Creating empty tensors.")
+    #     Y = np.zeros([1, 3], np.float32)
+    #     Y_t = np.zeros([1], np.int32)
+    #     Y_m = np.zeros([1], np.int32)
+        
+    # print("--- End of processing ---\n")
+ # ------------------- END -------------------
 
     output_dict = {}
     output_dict["X"] = torch.tensor(X, device=device, dtype=torch.float32)
